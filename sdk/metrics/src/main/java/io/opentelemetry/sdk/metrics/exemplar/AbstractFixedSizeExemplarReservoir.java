@@ -7,7 +7,6 @@ package io.opentelemetry.sdk.metrics.exemplar;
 
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
-import io.opentelemetry.api.common.AttributesBuilder;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.sdk.common.Clock;
@@ -74,8 +73,8 @@ abstract class AbstractFixedSizeExemplarReservoir implements ExemplarReservoir {
     // Note: we are collecting exemplars from buckets piecemeal, but we
     // could still be sampling exemplars during this process.
     List<ExemplarData> results = new ArrayList<>();
-    for (int i = 0; i < this.storage.length; ++i) {
-      ExemplarData result = this.storage[i].getAndReset(pointAttributes);
+    for (ReservoirCell reservoirCell : this.storage) {
+      ExemplarData result = reservoirCell.getAndReset(pointAttributes);
       if (result != null) {
         results.add(result);
       }
@@ -134,19 +133,11 @@ abstract class AbstractFixedSizeExemplarReservoir implements ExemplarReservoir {
   }
 
   /** Returns filtered attributes for exemplars. */
-  @SuppressWarnings("unchecked")
   private static Attributes filtered(Attributes original, Attributes metricPoint) {
     if (metricPoint.isEmpty()) {
       return original;
     }
-    AttributesBuilder result = Attributes.builder();
-    Set<AttributeKey<?>> keys = metricPoint.asMap().keySet();
-    original.forEach(
-        (k, v) -> {
-          if (!keys.contains(k)) {
-            result.<Object>put((AttributeKey<Object>) k, v);
-          }
-        });
-    return result.build();
+    Set<AttributeKey<?>> metricPointKeys = metricPoint.asMap().keySet();
+    return original.toBuilder().removeIf(metricPointKeys::contains).build();
   }
 }

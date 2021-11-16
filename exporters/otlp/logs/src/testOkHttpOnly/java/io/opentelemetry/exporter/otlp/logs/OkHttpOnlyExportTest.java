@@ -13,17 +13,17 @@ import com.linecorp.armeria.server.ServiceRequestContext;
 import com.linecorp.armeria.server.grpc.protocol.AbstractUnaryGrpcService;
 import com.linecorp.armeria.testing.junit5.server.ServerExtension;
 import io.opentelemetry.api.common.Attributes;
-import io.opentelemetry.api.trace.SpanId;
-import io.opentelemetry.api.trace.TraceFlags;
-import io.opentelemetry.api.trace.TraceId;
 import io.opentelemetry.exporter.otlp.internal.grpc.OkHttpGrpcExporterBuilder;
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceResponse;
 import io.opentelemetry.sdk.common.InstrumentationLibraryInfo;
-import io.opentelemetry.sdk.logging.data.LogRecord;
+import io.opentelemetry.sdk.logs.data.LogData;
+import io.opentelemetry.sdk.logs.data.LogDataBuilder;
+import io.opentelemetry.sdk.logs.data.Severity;
 import io.opentelemetry.sdk.resources.Resource;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -36,16 +36,13 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 
 class OkHttpOnlyExportTest {
 
-  private static final List<LogRecord> LOGS =
+  private static final List<LogData> LOGS =
       Collections.singletonList(
-          LogRecord.builder(
+          LogDataBuilder.create(
                   Resource.create(Attributes.builder().put("testKey", "testValue").build()),
                   InstrumentationLibraryInfo.create("instrumentation", "1"))
-              .setUnixTimeMillis(System.currentTimeMillis())
-              .setTraceId(TraceId.getInvalid())
-              .setSpanId(SpanId.getInvalid())
-              .setFlags(TraceFlags.getDefault().asByte())
-              .setSeverity(LogRecord.Severity.ERROR)
+              .setEpoch(Instant.now())
+              .setSeverity(Severity.ERROR)
               .setSeverityText("really severe")
               .setName("log1")
               .setBody("message")
@@ -53,13 +50,15 @@ class OkHttpOnlyExportTest {
               .build());
 
   private static final HeldCertificate HELD_CERTIFICATE;
+  private static final String canonicalHostName;
 
   static {
     try {
+      canonicalHostName = InetAddress.getByName("localhost").getCanonicalHostName();
       HELD_CERTIFICATE =
           new HeldCertificate.Builder()
               .commonName("localhost")
-              .addSubjectAlternativeName(InetAddress.getByName("localhost").getCanonicalHostName())
+              .addSubjectAlternativeName(canonicalHostName)
               .build();
     } catch (UnknownHostException e) {
       throw new IllegalStateException("Error building certificate.", e);
@@ -96,7 +95,7 @@ class OkHttpOnlyExportTest {
   void gzipCompressionExport() {
     OtlpGrpcLogExporter exporter =
         OtlpGrpcLogExporter.builder()
-            .setEndpoint("http://localhost:" + server.httpPort())
+            .setEndpoint("http://" + canonicalHostName + ":" + server.httpPort())
             .setCompression("gzip")
             .build();
     // See note on test method on why this checks isFalse.
@@ -106,7 +105,9 @@ class OkHttpOnlyExportTest {
   @Test
   void plainTextExport() {
     OtlpGrpcLogExporter exporter =
-        OtlpGrpcLogExporter.builder().setEndpoint("http://localhost:" + server.httpPort()).build();
+        OtlpGrpcLogExporter.builder()
+            .setEndpoint("http://" + canonicalHostName + ":" + server.httpPort())
+            .build();
     assertThat(exporter.export(LOGS).join(10, TimeUnit.SECONDS).isSuccess()).isTrue();
   }
 
@@ -114,7 +115,7 @@ class OkHttpOnlyExportTest {
   void authorityWithAuth() {
     OtlpGrpcLogExporter exporter =
         OtlpGrpcLogExporter.builder()
-            .setEndpoint("http://foo:bar@localhost:" + server.httpPort())
+            .setEndpoint("http://foo:bar@" + canonicalHostName + ":" + server.httpPort())
             .build();
     assertThat(exporter.export(LOGS).join(10, TimeUnit.SECONDS).isSuccess()).isTrue();
   }
@@ -123,7 +124,7 @@ class OkHttpOnlyExportTest {
   void testTlsExport() {
     OtlpGrpcLogExporter exporter =
         OtlpGrpcLogExporter.builder()
-            .setEndpoint("https://localhost:" + server.httpsPort())
+            .setEndpoint("https://" + canonicalHostName + ":" + server.httpsPort())
             .setTrustedCertificates(
                 HELD_CERTIFICATE.certificatePem().getBytes(StandardCharsets.UTF_8))
             .build();
@@ -134,7 +135,7 @@ class OkHttpOnlyExportTest {
   void testTlsExport_untrusted() {
     OtlpGrpcLogExporter exporter =
         OtlpGrpcLogExporter.builder()
-            .setEndpoint("https://localhost:" + server.httpsPort())
+            .setEndpoint("https://" + canonicalHostName + ":" + server.httpsPort())
             .build();
     assertThat(exporter.export(LOGS).join(10, TimeUnit.SECONDS).isSuccess()).isFalse();
   }

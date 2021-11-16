@@ -33,22 +33,6 @@ public interface MeterProvider {
   }
 
   /**
-   * Gets or creates a named and versioned meter instance.
-   *
-   * @param instrumentationName The name of the instrumentation library, not the name of the
-   *     instrument*ed* library.
-   * @param instrumentationVersion The version of the instrumentation library.
-   * @param schemaUrl Specifies the Schema URL that should be recorded in the emitted metrics.
-   * @return a meter instance.
-   */
-  default Meter get(String instrumentationName, String instrumentationVersion, String schemaUrl) {
-    return meterBuilder(instrumentationName)
-        .setInstrumentationVersion(instrumentationVersion)
-        .setSchemaUrl(schemaUrl)
-        .build();
-  }
-
-  /**
    * Creates a MeterBuilder for a named meter instance.
    *
    * @param instrumentationName The name of the instrumentation library, not the name of the
@@ -58,8 +42,8 @@ public interface MeterProvider {
    */
   MeterBuilder meterBuilder(String instrumentationName);
 
-  /** Returns a MeterProvider that does nothing. */
-  public static MeterProvider noop() {
+  /** Returns a no-op {@link MeterProvider} which provides meters which do not record or emit. */
+  static MeterProvider noop() {
     return NoopMeterProvider.getInstance();
   }
 }

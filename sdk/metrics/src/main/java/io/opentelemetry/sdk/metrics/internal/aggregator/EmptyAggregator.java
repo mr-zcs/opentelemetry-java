@@ -6,11 +6,16 @@
 package io.opentelemetry.sdk.metrics.internal.aggregator;
 
 import io.opentelemetry.api.common.Attributes;
+import io.opentelemetry.sdk.common.InstrumentationLibraryInfo;
+import io.opentelemetry.sdk.metrics.data.AggregationTemporality;
 import io.opentelemetry.sdk.metrics.data.ExemplarData;
 import io.opentelemetry.sdk.metrics.data.MetricData;
 import io.opentelemetry.sdk.metrics.exemplar.ExemplarReservoir;
+import io.opentelemetry.sdk.metrics.internal.descriptor.MetricDescriptor;
+import io.opentelemetry.sdk.resources.Resource;
 import java.util.List;
 import java.util.Map;
+import javax.annotation.Nullable;
 
 /**
  * A "null object" Aggregator which denotes no aggregation should occur.
@@ -39,23 +44,8 @@ public final class EmptyAggregator implements Aggregator<Void> {
   private EmptyAggregator() {}
 
   @Override
-  public Void accumulateDouble(double value) {
-    return null;
-  }
-
-  @Override
-  public Void accumulateLong(long value) {
-    return null;
-  }
-
-  @Override
   public AggregatorHandle<Void> createHandle() {
     return HANDLE;
-  }
-
-  @Override
-  public boolean isStateful() {
-    return false;
   }
 
   @Override
@@ -64,8 +54,18 @@ public final class EmptyAggregator implements Aggregator<Void> {
   }
 
   @Override
+  public Void diff(Void previousAccumulation, Void accumulation) {
+    return null;
+  }
+
+  @Override
+  @Nullable
   public MetricData toMetricData(
+      Resource resource,
+      InstrumentationLibraryInfo instrumentationLibraryInfo,
+      MetricDescriptor descriptor,
       Map<Attributes, Void> accumulationByLabels,
+      AggregationTemporality temporality,
       long startEpochNanos,
       long lastCollectionEpoch,
       long epochNanos) {

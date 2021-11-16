@@ -6,12 +6,15 @@
 package io.opentelemetry.sdk.metrics.testing;
 
 import io.opentelemetry.sdk.common.CompletableResultCode;
+import io.opentelemetry.sdk.metrics.data.AggregationTemporality;
 import io.opentelemetry.sdk.metrics.data.MetricData;
 import io.opentelemetry.sdk.metrics.export.MetricProducer;
 import io.opentelemetry.sdk.metrics.export.MetricReader;
 import io.opentelemetry.sdk.metrics.export.MetricReaderFactory;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.EnumSet;
+import javax.annotation.Nullable;
 
 /**
  * A {@link MetricReader} implementation that can be used to test OpenTelemetry integration.
@@ -40,28 +43,47 @@ import java.util.Collections;
  * </code></pre>
  */
 public class InMemoryMetricReader implements MetricReader, MetricReaderFactory {
-  // Note: we expect the `apply` method of `MetricReaderFactory` to be called
-  // prior to registering this being shared with other threads.
-  // This means this field does not need to be volatile because it will
-  // be filled out (and no longer mutated) prior to being shared with other threads.
-  private MetricProducer metricProducer;
-  private volatile Collection<MetricData> latest = Collections.emptyList();
+  private final AggregationTemporality preferred;
+  @Nullable private volatile MetricProducer metricProducer;
 
   /** Returns a new {@link InMemoryMetricReader}. */
   public static InMemoryMetricReader create() {
-    return new InMemoryMetricReader();
+    return new InMemoryMetricReader(AggregationTemporality.CUMULATIVE);
+  }
+
+  /** Creates a new {@link InMemoryMetricReader} that prefers DELTA aggregation. */
+  public static InMemoryMetricReader createDelta() {
+    return new InMemoryMetricReader(AggregationTemporality.DELTA);
+  }
+
+  private InMemoryMetricReader(AggregationTemporality preferred) {
+    this.preferred = preferred;
   }
 
   /** Returns all metrics accumulated since the last call. */
   public Collection<MetricData> collectAllMetrics() {
-    flush();
-    return latest;
+    MetricProducer metricProducer = this.metricProducer;
+    if (metricProducer != null) {
+      return metricProducer.collectAllMetrics();
+    }
+    return Collections.emptyList();
+  }
+
+  @Override
+  public EnumSet<AggregationTemporality> getSupportedTemporality() {
+    return EnumSet.of(AggregationTemporality.CUMULATIVE, AggregationTemporality.DELTA);
+  }
+
+  @Override
+  public AggregationTemporality getPreferredTemporality() {
+    return preferred;
   }
 
   @Override
   public CompletableResultCode flush() {
+    MetricProducer metricProducer = this.metricProducer;
     if (metricProducer != null) {
-      latest = metricProducer.collectAllMetrics();
+      metricProducer.collectAllMetrics();
     }
     return CompletableResultCode.ofSuccess();
   }
@@ -76,12 +98,4 @@ public class InMemoryMetricReader implements MetricReader, MetricReaderFactory {
     this.metricProducer = producer;
     return this;
   }
-
-  /**
-   * Constructs a new {@link InMemoryMetricReader}.
-   *
-   * @deprecated Use {@link #create()}.
-   */
-  @Deprecated
-  public InMemoryMetricReader() {}
 }

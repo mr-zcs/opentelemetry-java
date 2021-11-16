@@ -92,6 +92,8 @@ final class MetricAdapter {
         return Collector.Type.SUMMARY;
       case HISTOGRAM:
         return Collector.Type.HISTOGRAM;
+      case EXPONENTIAL_HISTOGRAM:
+        return Collector.Type.UNKNOWN; // todo exporter for exponential histogram
     }
     return Collector.Type.UNKNOWN;
   }
@@ -126,7 +128,8 @@ final class MetricAdapter {
                   labelNames,
                   labelValues,
                   doublePoint.getValue(),
-                  lastExemplarOrNull(doublePoint.getExemplars())));
+                  lastExemplarOrNull(doublePoint.getExemplars()),
+                  doublePoint.getEpochNanos()));
           break;
         case LONG_SUM:
         case LONG_GAUGE:
@@ -137,7 +140,8 @@ final class MetricAdapter {
                   labelNames,
                   labelValues,
                   longPoint.getValue(),
-                  lastExemplarOrNull(longPoint.getExemplars())));
+                  lastExemplarOrNull(longPoint.getExemplars()),
+                  longPoint.getEpochNanos()));
           break;
         case SUMMARY:
           addSummarySamples(
@@ -147,6 +151,8 @@ final class MetricAdapter {
           addHistogramSamples(
               (DoubleHistogramPointData) pointData, name, labelNames, labelValues, samples);
           break;
+        case EXPONENTIAL_HISTOGRAM:
+          break; // todo
       }
     }
     return samples;
@@ -159,10 +165,23 @@ final class MetricAdapter {
       List<String> labelValues,
       List<Sample> samples) {
     samples.add(
-        new Sample(
-            name + SAMPLE_SUFFIX_COUNT, labelNames, labelValues, doubleSummaryPoint.getCount()));
+        createSample(
+            name + SAMPLE_SUFFIX_COUNT,
+            labelNames,
+            labelValues,
+            doubleSummaryPoint.getCount(),
+            null,
+            doubleSummaryPoint.getEpochNanos()));
+
     samples.add(
-        new Sample(name + SAMPLE_SUFFIX_SUM, labelNames, labelValues, doubleSummaryPoint.getSum()));
+        createSample(
+            name + SAMPLE_SUFFIX_SUM,
+            labelNames,
+            labelValues,
+            doubleSummaryPoint.getSum(),
+            null,
+            doubleSummaryPoint.getEpochNanos()));
+
     List<ValueAtPercentile> valueAtPercentiles = doubleSummaryPoint.getPercentileValues();
     List<String> labelNamesWithQuantile = new ArrayList<>(labelNames.size());
     labelNamesWithQuantile.addAll(labelNames);
@@ -172,8 +191,13 @@ final class MetricAdapter {
       labelValuesWithQuantile.addAll(labelValues);
       labelValuesWithQuantile.add(doubleToGoString(valueAtPercentile.getPercentile()));
       samples.add(
-          new Sample(
-              name, labelNamesWithQuantile, labelValuesWithQuantile, valueAtPercentile.getValue()));
+          createSample(
+              name,
+              labelNamesWithQuantile,
+              labelValuesWithQuantile,
+              valueAtPercentile.getValue(),
+              null,
+              doubleSummaryPoint.getEpochNanos()));
     }
   }
 
@@ -184,14 +208,22 @@ final class MetricAdapter {
       List<String> labelValues,
       List<Sample> samples) {
     samples.add(
-        new Sample(
+        createSample(
             name + SAMPLE_SUFFIX_COUNT,
             labelNames,
             labelValues,
-            doubleHistogramPointData.getCount()));
+            doubleHistogramPointData.getCount(),
+            null,
+            doubleHistogramPointData.getEpochNanos()));
+
     samples.add(
-        new Sample(
-            name + SAMPLE_SUFFIX_SUM, labelNames, labelValues, doubleHistogramPointData.getSum()));
+        createSample(
+            name + SAMPLE_SUFFIX_SUM,
+            labelNames,
+            labelValues,
+            doubleHistogramPointData.getSum(),
+            null,
+            doubleHistogramPointData.getEpochNanos()));
 
     List<String> labelNamesWithLe = new ArrayList<>(labelNames.size() + 1);
     labelNamesWithLe.addAll(labelNames);
@@ -217,7 +249,8 @@ final class MetricAdapter {
               filterExemplars(
                   doubleHistogramPointData.getExemplars(),
                   doubleHistogramPointData.getBucketLowerBound(i),
-                  boundary)));
+                  boundary),
+              doubleHistogramPointData.getEpochNanos()));
     }
   }
 
@@ -265,6 +298,8 @@ final class MetricAdapter {
         return metricData.getDoubleSummaryData().getPoints();
       case HISTOGRAM:
         return metricData.getDoubleHistogramData().getPoints();
+      case EXPONENTIAL_HISTOGRAM:
+        return metricData.getExponentialHistogramData().getPoints();
     }
     return Collections.emptyList();
   }
@@ -274,11 +309,24 @@ final class MetricAdapter {
       List<String> labelNames,
       List<String> labelValues,
       double value,
-      @Nullable ExemplarData exemplar) {
+      @Nullable ExemplarData exemplar,
+      long timestampNanos) {
     if (exemplar != null) {
-      return new Sample(name, labelNames, labelValues, value, toPrometheusExemplar(exemplar));
+      return new Sample(
+          name,
+          labelNames,
+          labelValues,
+          value,
+          toPrometheusExemplar(exemplar),
+          TimeUnit.MILLISECONDS.convert(timestampNanos, TimeUnit.NANOSECONDS));
     }
-    return new Sample(name, labelNames, labelValues, value);
+    return new Sample(
+        name,
+        labelNames,
+        labelValues,
+        value,
+        null,
+        TimeUnit.MILLISECONDS.convert(timestampNanos, TimeUnit.NANOSECONDS));
   }
 
   private static io.prometheus.client.exemplars.Exemplar toPrometheusExemplar(

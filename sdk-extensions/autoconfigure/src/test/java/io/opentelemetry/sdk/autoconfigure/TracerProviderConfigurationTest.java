@@ -62,7 +62,11 @@ class TracerProviderConfigurationTest {
     // are verified in other test sets like testFullConfig.
     SdkTracerProvider tracerProvider =
         TracerProviderConfiguration.configureTracerProvider(
-            resource, DefaultConfigProperties.createForTest(properties));
+            resource,
+            DefaultConfigProperties.createForTest(properties),
+            TracerProviderConfiguration.class.getClassLoader(),
+            (a, unused) -> a,
+            (a, unused) -> a);
     try {
       assertThat(tracerProvider.getSampler()).isEqualTo(Sampler.alwaysOff());
 
@@ -170,32 +174,53 @@ class TracerProviderConfigurationTest {
 
   @Test
   void configureSampler() {
-    assertThat(TracerProviderConfiguration.configureSampler("always_on", EMPTY))
+    assertThat(
+            TracerProviderConfiguration.configureSampler(
+                "always_on", EMPTY, TracerProviderConfiguration.class.getClassLoader()))
         .isEqualTo(Sampler.alwaysOn());
-    assertThat(TracerProviderConfiguration.configureSampler("always_off", EMPTY))
+    assertThat(
+            TracerProviderConfiguration.configureSampler(
+                "always_off", EMPTY, TracerProviderConfiguration.class.getClassLoader()))
         .isEqualTo(Sampler.alwaysOff());
     assertThat(
             TracerProviderConfiguration.configureSampler(
                 "traceidratio",
                 DefaultConfigProperties.createForTest(
-                    Collections.singletonMap("otel.traces.sampler.arg", "0.5"))))
+                    Collections.singletonMap("otel.traces.sampler.arg", "0.5")),
+                TracerProviderConfiguration.class.getClassLoader()))
         .isEqualTo(Sampler.traceIdRatioBased(0.5));
-    assertThat(TracerProviderConfiguration.configureSampler("traceidratio", EMPTY))
+    assertThat(
+            TracerProviderConfiguration.configureSampler(
+                "traceidratio", EMPTY, TracerProviderConfiguration.class.getClassLoader()))
         .isEqualTo(Sampler.traceIdRatioBased(1.0d));
-    assertThat(TracerProviderConfiguration.configureSampler("parentbased_always_on", EMPTY))
+    assertThat(
+            TracerProviderConfiguration.configureSampler(
+                "parentbased_always_on", EMPTY, TracerProviderConfiguration.class.getClassLoader()))
         .isEqualTo(Sampler.parentBased(Sampler.alwaysOn()));
-    assertThat(TracerProviderConfiguration.configureSampler("parentbased_always_off", EMPTY))
+    assertThat(
+            TracerProviderConfiguration.configureSampler(
+                "parentbased_always_off",
+                EMPTY,
+                TracerProviderConfiguration.class.getClassLoader()))
         .isEqualTo(Sampler.parentBased(Sampler.alwaysOff()));
     assertThat(
             TracerProviderConfiguration.configureSampler(
                 "parentbased_traceidratio",
                 DefaultConfigProperties.createForTest(
-                    Collections.singletonMap("otel.traces.sampler.arg", "0.4"))))
+                    Collections.singletonMap("otel.traces.sampler.arg", "0.4")),
+                TracerProviderConfiguration.class.getClassLoader()))
         .isEqualTo(Sampler.parentBased(Sampler.traceIdRatioBased(0.4)));
-    assertThat(TracerProviderConfiguration.configureSampler("parentbased_traceidratio", EMPTY))
+    assertThat(
+            TracerProviderConfiguration.configureSampler(
+                "parentbased_traceidratio",
+                EMPTY,
+                TracerProviderConfiguration.class.getClassLoader()))
         .isEqualTo(Sampler.parentBased(Sampler.traceIdRatioBased(1.0d)));
 
-    assertThatThrownBy(() -> TracerProviderConfiguration.configureSampler("catsampler", EMPTY))
+    assertThatThrownBy(
+            () ->
+                TracerProviderConfiguration.configureSampler(
+                    "catsampler", EMPTY, TracerProviderConfiguration.class.getClassLoader()))
         .isInstanceOf(ConfigurationException.class)
         .hasMessage("Unrecognized value for otel.traces.sampler: catsampler");
   }

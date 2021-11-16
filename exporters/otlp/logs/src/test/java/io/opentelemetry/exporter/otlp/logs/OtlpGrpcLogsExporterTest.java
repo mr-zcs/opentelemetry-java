@@ -19,9 +19,7 @@ import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.StreamObserver;
 import io.opentelemetry.api.common.Attributes;
-import io.opentelemetry.api.trace.SpanId;
-import io.opentelemetry.api.trace.TraceFlags;
-import io.opentelemetry.api.trace.TraceId;
+import io.opentelemetry.exporter.otlp.internal.RetryPolicy;
 import io.opentelemetry.exporter.otlp.internal.grpc.DefaultGrpcExporter;
 import io.opentelemetry.exporter.otlp.internal.grpc.DefaultGrpcExporterBuilder;
 import io.opentelemetry.exporter.otlp.internal.logs.ResourceLogsMarshaler;
@@ -31,13 +29,16 @@ import io.opentelemetry.proto.collector.logs.v1.LogsServiceGrpc;
 import io.opentelemetry.proto.logs.v1.ResourceLogs;
 import io.opentelemetry.sdk.common.CompletableResultCode;
 import io.opentelemetry.sdk.common.InstrumentationLibraryInfo;
-import io.opentelemetry.sdk.logging.data.LogRecord;
+import io.opentelemetry.sdk.logs.data.LogData;
+import io.opentelemetry.sdk.logs.data.LogDataBuilder;
+import io.opentelemetry.sdk.logs.data.Severity;
 import io.opentelemetry.sdk.resources.Resource;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -153,8 +154,18 @@ class OtlpGrpcLogsExporterTest {
   }
 
   @Test
+  void testBuilderDelegate() {
+    assertThatCode(
+            () ->
+                DefaultGrpcExporterBuilder.getDelegateBuilder(
+                        OtlpGrpcLogExporterBuilder.class, OtlpGrpcLogExporter.builder())
+                    .addRetryPolicy(RetryPolicy.getDefault()))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
   void testExport() {
-    LogRecord log = generateFakeLog();
+    LogData log = generateFakeLog();
     OtlpGrpcLogExporter exporter =
         OtlpGrpcLogExporter.builder().setChannel(inProcessChannel).build();
     try {
@@ -168,7 +179,7 @@ class OtlpGrpcLogsExporterTest {
 
   @Test
   void testExport_MultipleLogs() {
-    List<LogRecord> logs = new ArrayList<>();
+    List<LogData> logs = new ArrayList<>();
     for (int i = 0; i < 10; i++) {
       logs.add(generateFakeLog());
     }
@@ -182,7 +193,7 @@ class OtlpGrpcLogsExporterTest {
     }
   }
 
-  private static List<ResourceLogs> toResourceLogs(List<LogRecord> logs) {
+  private static List<ResourceLogs> toResourceLogs(List<LogData> logs) {
     return Arrays.stream(ResourceLogsMarshaler.create(logs))
         .map(
             marshaler -> {
@@ -216,7 +227,7 @@ class OtlpGrpcLogsExporterTest {
 
   @Test
   void testExport_AfterShutdown() {
-    LogRecord log = generateFakeLog();
+    LogData log = generateFakeLog();
     OtlpGrpcLogExporter exporter =
         OtlpGrpcLogExporter.builder().setChannel(inProcessChannel).build();
     exporter.shutdown();
@@ -354,15 +365,12 @@ class OtlpGrpcLogsExporterTest {
         .isInstanceOf(DefaultGrpcExporterBuilder.class);
   }
 
-  private static LogRecord generateFakeLog() {
-    return LogRecord.builder(
+  private static LogData generateFakeLog() {
+    return LogDataBuilder.create(
             Resource.create(Attributes.builder().put("testKey", "testValue").build()),
             InstrumentationLibraryInfo.create("instrumentation", "1"))
-        .setUnixTimeMillis(System.currentTimeMillis())
-        .setTraceId(TraceId.getInvalid())
-        .setSpanId(SpanId.getInvalid())
-        .setFlags(TraceFlags.getDefault().asByte())
-        .setSeverity(LogRecord.Severity.ERROR)
+        .setEpoch(Instant.now())
+        .setSeverity(Severity.ERROR)
         .setSeverityText("really severe")
         .setName("log1")
         .setBody("message")

@@ -19,6 +19,7 @@ import io.opentelemetry.sdk.metrics.data.DoublePointData;
 import io.opentelemetry.sdk.metrics.data.DoubleSumData;
 import io.opentelemetry.sdk.metrics.data.DoubleSummaryData;
 import io.opentelemetry.sdk.metrics.data.DoubleSummaryPointData;
+import io.opentelemetry.sdk.metrics.data.ExponentialHistogramData;
 import io.opentelemetry.sdk.metrics.data.LongExemplarData;
 import io.opentelemetry.sdk.metrics.data.LongGaugeData;
 import io.opentelemetry.sdk.metrics.data.LongPointData;
@@ -54,6 +55,30 @@ public class MetricAssertionsTest {
           /* description= */ "description",
           /* unit= */ "unit",
           DoubleHistogramData.create(
+              AggregationTemporality.DELTA,
+              // Points
+              Collections.emptyList()));
+
+  private static final MetricData EXPONENTIAL_HISTOGRAM_METRIC =
+      MetricData.createExponentialHistogram(
+          RESOURCE,
+          INSTRUMENTATION_LIBRARY_INFO,
+          /* name= */ "exponential_histogram",
+          /* description= */ "description",
+          /* unit= */ "unit",
+          ExponentialHistogramData.create(
+              AggregationTemporality.CUMULATIVE,
+              // Points
+              Collections.emptyList()));
+
+  private static final MetricData EXPONENTIAL_HISTOGRAM_DELTA_METRIC =
+      MetricData.createExponentialHistogram(
+          RESOURCE,
+          INSTRUMENTATION_LIBRARY_INFO,
+          /* name= */ "exponential_histogram_delta",
+          /* description= */ "description",
+          /* unit= */ "unit",
+          ExponentialHistogramData.create(
               AggregationTemporality.DELTA,
               // Points
               Collections.emptyList()));
@@ -218,12 +243,33 @@ public class MetricAssertionsTest {
   }
 
   @Test
+  void exponential_histogram_passing() {
+    assertThat(EXPONENTIAL_HISTOGRAM_METRIC).hasExponentialHistogram().isCumulative();
+    assertThat(EXPONENTIAL_HISTOGRAM_DELTA_METRIC).hasExponentialHistogram().isDelta();
+  }
+
+  @Test
+  void exponential_histogram_fails() {
+    assertThatThrownBy(() -> assertThat(DOUBLE_GAUGE_METRIC).hasExponentialHistogram())
+        .isInstanceOf(AssertionError.class);
+    assertThatThrownBy(
+            () -> assertThat(EXPONENTIAL_HISTOGRAM_METRIC).hasExponentialHistogram().isDelta())
+        .isInstanceOf(AssertionError.class);
+    assertThatThrownBy(
+            () ->
+                assertThat(EXPONENTIAL_HISTOGRAM_DELTA_METRIC)
+                    .hasExponentialHistogram()
+                    .isCumulative())
+        .isInstanceOf(AssertionError.class);
+  }
+
+  @Test
   void summary_passing() {
     assertThat(DOUBLE_SUMMARY_METRIC).hasDoubleSummary();
   }
 
   @Test
-  void sumamry_failing() {
+  void summary_failing() {
     assertThatThrownBy(() -> assertThat(DOUBLE_GAUGE_METRIC).hasDoubleSummary())
         .isInstanceOf(AssertionError.class);
   }

@@ -18,6 +18,7 @@ import io.opentelemetry.exporter.jaeger.JaegerGrpcSpanExporterBuilder;
 import io.opentelemetry.exporter.logging.LoggingSpanExporter;
 import io.opentelemetry.exporter.otlp.http.trace.OtlpHttpSpanExporter;
 import io.opentelemetry.exporter.otlp.http.trace.OtlpHttpSpanExporterBuilder;
+import io.opentelemetry.exporter.otlp.internal.grpc.DefaultGrpcExporterBuilder;
 import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
 import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporterBuilder;
 import io.opentelemetry.exporter.zipkin.ZipkinSpanExporter;
@@ -32,6 +33,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 
 final class SpanExporterConfiguration {
@@ -39,7 +41,11 @@ final class SpanExporterConfiguration {
   private static final String EXPORTER_NONE = "none";
 
   // Visible for testing
-  static Map<String, SpanExporter> configureSpanExporters(ConfigProperties config) {
+  static Map<String, SpanExporter> configureSpanExporters(
+      ConfigProperties config,
+      ClassLoader serviceClassLoader,
+      BiFunction<? super SpanExporter, ConfigProperties, ? extends SpanExporter>
+          spanExporterCustomizer) {
     List<String> exporterNamesList = config.getList("otel.traces.exporter");
     Set<String> exporterNames = new HashSet<>(exporterNamesList);
     if (exporterNamesList.size() != exporterNames.size()) {
@@ -58,7 +64,12 @@ final class SpanExporterConfiguration {
         throw new ConfigurationException(
             "otel.traces.exporter contains " + EXPORTER_NONE + " along with other exporters");
       }
-      return Collections.emptyMap();
+      SpanExporter noop = SpanExporter.composite();
+      SpanExporter customized = spanExporterCustomizer.apply(noop, config);
+      if (customized == noop) {
+        return Collections.emptyMap();
+      }
+      return Collections.singletonMap("none", customized);
     }
 
     if (exporterNames.isEmpty()) {
@@ -71,13 +82,16 @@ final class SpanExporterConfiguration {
             exporterNamesList,
             ConfigurableSpanExporterProvider::getName,
             ConfigurableSpanExporterProvider::createExporter,
-            config);
+            config,
+            serviceClassLoader);
 
     return exporterNames.stream()
         .collect(
             toMap(
                 Function.identity(),
-                exporterName -> configureExporter(exporterName, config, spiExporters)));
+                exporterName ->
+                    spanExporterCustomizer.apply(
+                        configureExporter(exporterName, config, spiExporters), config)));
   }
 
   // Visible for testing
@@ -123,7 +137,8 @@ final class SpanExporterConfiguration {
           builder::addHeader,
           builder::setCompression,
           builder::setTimeout,
-          builder::setTrustedCertificates);
+          builder::setTrustedCertificates,
+          unused -> {});
 
       return builder.build();
     } else if (protocol.equals(PROTOCOL_GRPC)) {
@@ -140,8 +155,11 @@ final class SpanExporterConfiguration {
           builder::addHeader,
           builder::setCompression,
           builder::setTimeout,
-          builder::setTrustedCertificates);
-
+          builder::setTrustedCertificates,
+          retryPolicy ->
+              DefaultGrpcExporterBuilder.getDelegateBuilder(
+                      OtlpGrpcSpanExporterBuilder.class, builder)
+                  .addRetryPolicy(retryPolicy));
       return builder.build();
     } else {
       throw new ConfigurationException("Unsupported OTLP traces protocol: " + protocol);

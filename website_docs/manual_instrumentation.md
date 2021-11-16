@@ -131,7 +131,7 @@ void parentTwo() {
 }
 void childTwo() {
   Span childSpan = tracer.spanBuilder("child")
-    // NOTE: setParent(...) is not required; 
+    // NOTE: setParent(...) is not required;
     // `Span.current()` is automatically added as the parent
     .startSpan();
   try(Scope scope = childSpan.makeCurrent()) {
@@ -140,7 +140,7 @@ void childTwo() {
     childSpan.end();
   }
 }
-``` 
+```
 
 To link spans from remote processes, it is sufficient to set the
 [Remote Context](#context-propagation) as parent.
@@ -162,7 +162,7 @@ span.setAttribute("http.url", url.toString());
 
 Some of these operations represent calls that use well-known protocols like HTTP or database calls.
 For these, OpenTelemetry requires specific attributes to be set. The full attribute list is
-available in the [Semantic Conventions](https://github.com/open-telemetry/opentelemetry-specification/blob/master/specification/trace/semantic_conventions/README.md) in the cross-language specification.
+available in the [Semantic Conventions]({{< relref "/docs/reference/specification/trace/semantic_conventions/" >}}) in the cross-language specification.
 
 ### Create Spans with events
 
@@ -254,7 +254,7 @@ TextMapGetter<HttpExchange> getter =
    @Override
    public Iterable<String> keys(HttpExchange carrier) {
      return carrier.getRequestHeaders().keySet();
-   } 
+   }
 };
 ...
 public void handle(HttpExchange httpExchange) {
@@ -306,14 +306,14 @@ The following is an example of counter usage:
           .setInstrumentationVersion("1.0.0")
           .build();
 
-// Build counter e.g. LongCounter 
+// Build counter e.g. LongCounter
   LongCounter counter = meter
         .counterBuilder("processed_jobs")
         .setDescription("Processed jobs")
         .setUnit("1")
         .build();
 
-// It is recommended that the API user keep a reference to a Bound Counter for the entire time or 
+// It is recommended that the API user keep a reference to a Bound Counter for the entire time or
 // call unbind when no-longer needed.
   BoundLongCounter someWorkCounter = counter.bind(Attributes.of(stringKey("Key"), "SomeWork"));
 
@@ -378,7 +378,7 @@ interface.
 ```java
     SdkTracerProvider tracerProvider = SdkTracerProvider.builder()
       .setSampler(Sampler.alwaysOn())
-      //or 
+      //or
       .setSampler(Sampler.alwaysOff())
       //or
       .setSampler(Sampler.traceIdRatioBased(0.5))
@@ -437,18 +437,17 @@ properties, you can use the `opentelemetry-sdk-extension-autoconfigure` module.
 
 See the supported configuration options in the module's [README](https://github.com/open-telemetry/opentelemetry-java/tree/main/sdk-extensions/autoconfigure).
 
-[AlwaysOnSampler]: https://github.com/open-telemetry/opentelemetry-java/blob/main/sdk/tracing/src/main/java/io/opentelemetry/sdk/trace/samplers/Sampler.java#L29
-[AlwaysOffSampler]:https://github.com/open-telemetry/opentelemetry-java/blob/main/sdk/tracing/src/main/java/io/opentelemetry/sdk/trace/samplers/Sampler.java#L40
-[ParentBased]:https://github.com/open-telemetry/opentelemetry-java/blob/main/sdk/tracing/src/main/java/io/opentelemetry/sdk/trace/samplers/Sampler.java#L54
-[TraceIdRatioBased]:https://github.com/open-telemetry/opentelemetry-java/blob/main/sdk/tracing/src/main/java/io/opentelemetry/sdk/trace/samplers/Sampler.java#L78
-[Library Guidelines]: https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/library-guidelines.md
+[AlwaysOnSampler]: https://github.com/open-telemetry/opentelemetry-java/blob/main/sdk/trace/src/main/java/io/opentelemetry/sdk/trace/samplers/AlwaysOnSampler.java
+[AlwaysOffSampler]: https://github.com/open-telemetry/opentelemetry-java/blob/main/sdk/trace/src/main/java/io/opentelemetry/sdk/trace/samplers/AlwaysOffSampler.java
+[ParentBased]: https://github.com/open-telemetry/opentelemetry-java/blob/main/sdk/trace/src/main/java/io/opentelemetry/sdk/trace/samplers/ParentBasedSampler.java
+[TraceIdRatioBased]: https://github.com/open-telemetry/opentelemetry-java/blob/main/sdk/trace/src/main/java/io/opentelemetry/sdk/trace/samplers/TraceIdRatioBasedSampler.java
+[Library Guidelines]: {{< relref "/docs/reference/specification/library-guidelines" >}}
 [OpenTelemetry Collector]: https://github.com/open-telemetry/opentelemetry-collector
-[OpenTelemetry Registry]: https://opentelemetry.io/registry/?s=exporter
-[OpenTelemetry Website]: https://opentelemetry.io/
-[Obtaining a Tracer]: https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/trace/api.md#get-a-tracer
-[Semantic Conventions]: https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/trace/semantic_conventions
-[Instrumentation Library]: https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/glossary.md#instrumentation-library
-[instrumented library]: https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/glossary.md#instrumented-library
+[OpenTelemetry Registry]: {{< relref "/registry/" >}}?component=exporter&language=java
+[Obtaining a Tracer]: {{< relref "/docs/reference/specification/trace/api#get-a-tracer" >}}
+[Semantic Conventions]: {{< relref "/docs/reference/specification/trace/semantic_conventions" >}}
+[Instrumentation Library]: {{< relref "/docs/reference/specification/glossary#instrumentation-library" >}}
+[instrumented library]: {{< relref "/docs/reference/specification/glossary#instrumented-library" >}}
 
 ## Logging and Error Handling
 
@@ -468,21 +467,21 @@ a particular message.
 ### Examples
 
 ```properties
-## Turn off all OpenTelemetry logging 
+## Turn off all OpenTelemetry logging
 io.opentelemetry.level = OFF
 ```
 
 ```properties
-## Turn off logging for just the BatchSpanProcessor 
+## Turn off logging for just the BatchSpanProcessor
 io.opentelemetry.sdk.trace.export.BatchSpanProcessor.level = OFF
 ```
 
 ```properties
-## Log "FINE" messages for help in debugging 
+## Log "FINE" messages for help in debugging
 io.opentelemetry.level = FINE
 
-## Sets the default ConsoleHandler's logger's level 
-## Note this impacts the logging outside of OpenTelemetry as well 
+## Sets the default ConsoleHandler's logger's level
+## Note this impacts the logging outside of OpenTelemetry as well
 java.util.logging.ConsoleHandler.level = FINE
 
 ```

@@ -5,6 +5,10 @@
 
 package io.opentelemetry.exporter.otlp.internal.logs;
 
+import io.opentelemetry.api.trace.SpanContext;
+import io.opentelemetry.api.trace.SpanId;
+import io.opentelemetry.api.trace.TraceFlags;
+import io.opentelemetry.api.trace.TraceId;
 import io.opentelemetry.exporter.otlp.internal.KeyValueMarshaler;
 import io.opentelemetry.exporter.otlp.internal.MarshalerUtil;
 import io.opentelemetry.exporter.otlp.internal.MarshalerWithSize;
@@ -13,10 +17,14 @@ import io.opentelemetry.exporter.otlp.internal.Serializer;
 import io.opentelemetry.exporter.otlp.internal.StringAnyValueMarshaler;
 import io.opentelemetry.proto.logs.v1.internal.LogRecord;
 import io.opentelemetry.proto.logs.v1.internal.SeverityNumber;
-import io.opentelemetry.sdk.logging.data.LogRecord.Severity;
+import io.opentelemetry.sdk.logs.data.Severity;
 import java.io.IOException;
+import javax.annotation.Nullable;
 
 final class LogMarshaler extends MarshalerWithSize {
+  private static final String INVALID_TRACE_ID = TraceId.getInvalid();
+  private static final String INVALID_SPAN_ID = SpanId.getInvalid();
+
   private final long timeUnixNano;
   private final ProtoEnumInfo severityNumber;
   private final byte[] severityText;
@@ -24,30 +32,31 @@ final class LogMarshaler extends MarshalerWithSize {
   private final MarshalerWithSize anyValueMarshaler;
   private final KeyValueMarshaler[] attributeMarshalers;
   private final int droppedAttributesCount;
-  private final int flags;
-  private final String traceId;
-  private final String spanId;
+  private final TraceFlags traceFlags;
+  @Nullable private final String traceId;
+  @Nullable private final String spanId;
 
-  static LogMarshaler create(io.opentelemetry.sdk.logging.data.LogRecord logRecord) {
+  static LogMarshaler create(io.opentelemetry.sdk.logs.data.LogData logData) {
     KeyValueMarshaler[] attributeMarshalers =
-        KeyValueMarshaler.createRepeated(logRecord.getAttributes());
+        KeyValueMarshaler.createRepeated(logData.getAttributes());
 
     // For now, map all the bodies to String AnyValue.
     StringAnyValueMarshaler anyValueMarshaler =
-        new StringAnyValueMarshaler(MarshalerUtil.toBytes(logRecord.getBody().asString()));
+        new StringAnyValueMarshaler(MarshalerUtil.toBytes(logData.getBody().asString()));
 
+    SpanContext spanContext = logData.getSpanContext();
     return new LogMarshaler(
-        logRecord.getTimeUnixNano(),
-        toProtoSeverityNumber(logRecord.getSeverity()),
-        MarshalerUtil.toBytes(logRecord.getSeverityText()),
-        MarshalerUtil.toBytes(logRecord.getName()),
+        logData.getEpochNanos(),
+        toProtoSeverityNumber(logData.getSeverity()),
+        MarshalerUtil.toBytes(logData.getSeverityText()),
+        MarshalerUtil.toBytes(logData.getName()),
         anyValueMarshaler,
         attributeMarshalers,
         // TODO (trask) implement droppedAttributesCount in LogRecord
         0,
-        logRecord.getFlags(),
-        logRecord.getTraceId(),
-        logRecord.getSpanId());
+        spanContext.getTraceFlags(),
+        spanContext.getTraceId().equals(INVALID_TRACE_ID) ? null : spanContext.getTraceId(),
+        spanContext.getSpanId().equals(INVALID_SPAN_ID) ? null : spanContext.getSpanId());
   }
 
   private LogMarshaler(
@@ -58,9 +67,9 @@ final class LogMarshaler extends MarshalerWithSize {
       MarshalerWithSize anyValueMarshaler,
       KeyValueMarshaler[] attributeMarshalers,
       int droppedAttributesCount,
-      int flags,
-      String traceId,
-      String spanId) {
+      TraceFlags traceFlags,
+      @Nullable String traceId,
+      @Nullable String spanId) {
     super(
         calculateSize(
             timeUnixNano,
@@ -70,13 +79,13 @@ final class LogMarshaler extends MarshalerWithSize {
             anyValueMarshaler,
             attributeMarshalers,
             droppedAttributesCount,
-            flags,
+            traceFlags,
             traceId,
             spanId));
     this.timeUnixNano = timeUnixNano;
     this.traceId = traceId;
     this.spanId = spanId;
-    this.flags = flags;
+    this.traceFlags = traceFlags;
     this.severityNumber = severityNumber;
     this.severityText = severityText;
     this.nameUtf8 = nameUtf8;
@@ -100,7 +109,7 @@ final class LogMarshaler extends MarshalerWithSize {
     output.serializeRepeatedMessage(LogRecord.ATTRIBUTES, attributeMarshalers);
     output.serializeUInt32(LogRecord.DROPPED_ATTRIBUTES_COUNT, droppedAttributesCount);
 
-    output.serializeFixed32(LogRecord.FLAGS, flags);
+    output.serializeFixed32(LogRecord.FLAGS, toUnsignedInt(traceFlags.asByte()));
     output.serializeTraceId(LogRecord.TRACE_ID, traceId);
     output.serializeSpanId(LogRecord.SPAN_ID, spanId);
   }
@@ -113,9 +122,9 @@ final class LogMarshaler extends MarshalerWithSize {
       MarshalerWithSize anyValueMarshaler,
       KeyValueMarshaler[] attributeMarshalers,
       int droppedAttributesCount,
-      int flags,
-      String traceId,
-      String spanId) {
+      TraceFlags traceFlags,
+      @Nullable String traceId,
+      @Nullable String spanId) {
     int size = 0;
     size += MarshalerUtil.sizeFixed64(LogRecord.TIME_UNIX_NANO, timeUnixNano);
 
@@ -130,7 +139,7 @@ final class LogMarshaler extends MarshalerWithSize {
     size += MarshalerUtil.sizeRepeatedMessage(LogRecord.ATTRIBUTES, attributeMarshalers);
     size += MarshalerUtil.sizeUInt32(LogRecord.DROPPED_ATTRIBUTES_COUNT, droppedAttributesCount);
 
-    size += MarshalerUtil.sizeFixed32(LogRecord.FLAGS, flags);
+    size += MarshalerUtil.sizeFixed32(LogRecord.FLAGS, toUnsignedInt(traceFlags.asByte()));
     size += MarshalerUtil.sizeTraceId(LogRecord.TRACE_ID, traceId);
     size += MarshalerUtil.sizeSpanId(LogRecord.SPAN_ID, spanId);
     return size;
@@ -192,5 +201,10 @@ final class LogMarshaler extends MarshalerWithSize {
     }
     // NB: Should not be possible with aligned versions.
     return SeverityNumber.SEVERITY_NUMBER_UNSPECIFIED;
+  }
+
+  /** Vendored {@link Byte#toUnsignedInt(byte)} to support Android. */
+  private static int toUnsignedInt(byte x) {
+    return ((int) x) & 0xff;
   }
 }

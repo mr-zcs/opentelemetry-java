@@ -10,20 +10,22 @@ import io.opentelemetry.api.metrics.ObservableDoubleMeasurement;
 import io.opentelemetry.api.metrics.ObservableLongMeasurement;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.sdk.common.InstrumentationLibraryInfo;
-import io.opentelemetry.sdk.metrics.common.InstrumentDescriptor;
+import io.opentelemetry.sdk.internal.ThrottlingLogger;
+import io.opentelemetry.sdk.metrics.data.AggregationTemporality;
 import io.opentelemetry.sdk.metrics.data.MetricData;
 import io.opentelemetry.sdk.metrics.exemplar.ExemplarFilter;
 import io.opentelemetry.sdk.metrics.internal.aggregator.Aggregator;
+import io.opentelemetry.sdk.metrics.internal.descriptor.InstrumentDescriptor;
 import io.opentelemetry.sdk.metrics.internal.descriptor.MetricDescriptor;
-import io.opentelemetry.sdk.metrics.internal.export.CollectionHandle;
+import io.opentelemetry.sdk.metrics.internal.export.CollectionInfo;
 import io.opentelemetry.sdk.metrics.internal.view.AttributesProcessor;
 import io.opentelemetry.sdk.metrics.view.View;
 import io.opentelemetry.sdk.resources.Resource;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.annotation.Nullable;
 
@@ -34,13 +36,13 @@ import javax.annotation.Nullable;
  * at any time.
  */
 public final class AsynchronousMetricStorage<T> implements MetricStorage {
+  private static final ThrottlingLogger logger =
+      new ThrottlingLogger(Logger.getLogger(DeltaMetricStorage.class.getName()));
   private final MetricDescriptor metricDescriptor;
   private final ReentrantLock collectLock = new ReentrantLock();
   private final AsyncAccumulator<T> asyncAccumulator;
   private final TemporalMetricStorage<T> storage;
   private final Runnable metricUpdater;
-
-  private static final Logger logger = Logger.getLogger(AsynchronousMetricStorage.class.getName());
 
   /** Constructs asynchronous metric storage which stores nothing. */
   public static MetricStorage empty() {
@@ -48,24 +50,15 @@ public final class AsynchronousMetricStorage<T> implements MetricStorage {
   }
 
   /** Constructs storage for {@code double} valued instruments. */
-  @Nullable
   public static <T> MetricStorage doubleAsynchronousAccumulator(
       View view,
       InstrumentDescriptor instrument,
-      Resource resource,
-      InstrumentationLibraryInfo instrumentationLibraryInfo,
       Consumer<ObservableDoubleMeasurement> metricUpdater) {
     final MetricDescriptor metricDescriptor = MetricDescriptor.create(view, instrument);
     Aggregator<T> aggregator =
-        view.getAggregation()
-            .createAggregator(
-                resource,
-                instrumentationLibraryInfo,
-                instrument,
-                metricDescriptor,
-                ExemplarFilter.neverSample());
+        view.getAggregation().createAggregator(instrument, ExemplarFilter.neverSample());
 
-    final AsyncAccumulator<T> measurementAccumulator = new AsyncAccumulator<>();
+    final AsyncAccumulator<T> measurementAccumulator = new AsyncAccumulator<>(instrument);
     if (Aggregator.empty() == aggregator) {
       return empty();
     }
@@ -75,9 +68,12 @@ public final class AsynchronousMetricStorage<T> implements MetricStorage {
         new ObservableDoubleMeasurement() {
           @Override
           public void observe(double value, Attributes attributes) {
-            measurementAccumulator.record(
-                attributesProcessor.process(attributes, Context.current()),
-                aggregator.accumulateDouble(value));
+            T accumulation =
+                aggregator.accumulateDoubleMeasurement(value, attributes, Context.current());
+            if (accumulation != null) {
+              measurementAccumulator.record(
+                  attributesProcessor.process(attributes, Context.current()), accumulation);
+            }
           }
 
           @Override
@@ -93,26 +89,11 @@ public final class AsynchronousMetricStorage<T> implements MetricStorage {
   public static <T> MetricStorage longAsynchronousAccumulator(
       View view,
       InstrumentDescriptor instrument,
-      Resource resource,
-      InstrumentationLibraryInfo instrumentationLibraryInfo,
       Consumer<ObservableLongMeasurement> metricUpdater) {
     final MetricDescriptor metricDescriptor = MetricDescriptor.create(view, instrument);
     Aggregator<T> aggregator =
-        view.getAggregation()
-            .createAggregator(
-                resource,
-                instrumentationLibraryInfo,
-                instrument,
-                metricDescriptor,
-                ExemplarFilter.neverSample());
-    if (aggregator.isStateful()) {
-      // The aggregator is expecting to diff SUMs for DELTA temporality.
-      logger.warning(
-          String.format(
-              "Unable to provide DELTA accumulation on %s for instrument: %s",
-              metricDescriptor, instrument));
-    }
-    final AsyncAccumulator<T> measurementAccumulator = new AsyncAccumulator<>();
+        view.getAggregation().createAggregator(instrument, ExemplarFilter.neverSample());
+    final AsyncAccumulator<T> measurementAccumulator = new AsyncAccumulator<>(instrument);
     final AttributesProcessor attributesProcessor = view.getAttributesProcessor();
     // TODO: Find a way to grab the measurement JUST ONCE for all async metrics.
     final ObservableLongMeasurement result =
@@ -120,9 +101,12 @@ public final class AsynchronousMetricStorage<T> implements MetricStorage {
 
           @Override
           public void observe(long value, Attributes attributes) {
-            measurementAccumulator.record(
-                attributesProcessor.process(attributes, Context.current()),
-                aggregator.accumulateLong(value));
+            T accumulation =
+                aggregator.accumulateLongMeasurement(value, attributes, Context.current());
+            if (accumulation != null) {
+              measurementAccumulator.record(
+                  attributesProcessor.process(attributes, Context.current()), accumulation);
+            }
           }
 
           @Override
@@ -148,16 +132,27 @@ public final class AsynchronousMetricStorage<T> implements MetricStorage {
   @Override
   @Nullable
   public MetricData collectAndReset(
-      CollectionHandle collector,
-      Set<CollectionHandle> allCollectors,
+      CollectionInfo collectionInfo,
+      Resource resource,
+      InstrumentationLibraryInfo instrumentationLibraryInfo,
       long startEpochNanos,
       long epochNanos,
       boolean suppressSynchronousCollection) {
+    AggregationTemporality temporality =
+        TemporalityUtils.resolveTemporality(
+            collectionInfo.getSupportedAggregation(), collectionInfo.getPreferredAggregation());
     collectLock.lock();
     try {
       metricUpdater.run();
       return storage.buildMetricFor(
-          collector, asyncAccumulator.collectAndReset(), startEpochNanos, epochNanos);
+          collectionInfo.getCollector(),
+          resource,
+          instrumentationLibraryInfo,
+          getMetricDescriptor(),
+          temporality,
+          asyncAccumulator.collectAndReset(),
+          startEpochNanos,
+          epochNanos);
     } finally {
       collectLock.unlock();
     }
@@ -170,9 +165,24 @@ public final class AsynchronousMetricStorage<T> implements MetricStorage {
 
   /** Helper class to record async measurements on demand. */
   private static final class AsyncAccumulator<T> {
+    private final InstrumentDescriptor instrument;
     private Map<Attributes, T> currentAccumulation = new HashMap<>();
 
+    AsyncAccumulator(InstrumentDescriptor instrument) {
+      this.instrument = instrument;
+    }
+
     public void record(Attributes attributes, T accumulation) {
+      if (currentAccumulation.size() >= MetricStorageUtils.MAX_ACCUMULATIONS) {
+        logger.log(
+            Level.WARNING,
+            "Instrument "
+                + instrument.getName()
+                + " has exceeded the maximum allowed accumulations ("
+                + MetricStorageUtils.MAX_ACCUMULATIONS
+                + ").");
+        return;
+      }
       // TODO: error on metric overwrites
       currentAccumulation.put(attributes, accumulation);
     }

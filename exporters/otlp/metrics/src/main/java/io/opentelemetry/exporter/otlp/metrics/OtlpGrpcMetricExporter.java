@@ -8,6 +8,7 @@ package io.opentelemetry.exporter.otlp.metrics;
 import io.opentelemetry.exporter.otlp.internal.grpc.GrpcExporter;
 import io.opentelemetry.exporter.otlp.internal.metrics.MetricsRequestMarshaler;
 import io.opentelemetry.sdk.common.CompletableResultCode;
+import io.opentelemetry.sdk.metrics.data.AggregationTemporality;
 import io.opentelemetry.sdk.metrics.data.MetricData;
 import io.opentelemetry.sdk.metrics.export.MetricExporter;
 import java.util.Collection;
@@ -18,6 +19,7 @@ import javax.annotation.concurrent.ThreadSafe;
 public final class OtlpGrpcMetricExporter implements MetricExporter {
 
   private final GrpcExporter<MetricsRequestMarshaler> delegate;
+  private final AggregationTemporality preferredTemporality;
 
   /**
    * Returns a new {@link OtlpGrpcMetricExporter} reading the configuration values from the
@@ -39,8 +41,15 @@ public final class OtlpGrpcMetricExporter implements MetricExporter {
     return new OtlpGrpcMetricExporterBuilder();
   }
 
-  OtlpGrpcMetricExporter(GrpcExporter<MetricsRequestMarshaler> delegate) {
+  OtlpGrpcMetricExporter(
+      GrpcExporter<MetricsRequestMarshaler> delegate, AggregationTemporality preferredTemporality) {
     this.delegate = delegate;
+    this.preferredTemporality = preferredTemporality;
+  }
+
+  @Override
+  public AggregationTemporality getPreferredTemporality() {
+    return preferredTemporality;
   }
 
   /**

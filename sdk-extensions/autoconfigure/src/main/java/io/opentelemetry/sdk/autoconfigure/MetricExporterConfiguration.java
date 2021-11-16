@@ -12,17 +12,17 @@ import static io.opentelemetry.sdk.autoconfigure.OtlpConfigUtil.PROTOCOL_HTTP_PR
 import io.opentelemetry.exporter.logging.LoggingMetricExporter;
 import io.opentelemetry.exporter.otlp.http.metrics.OtlpHttpMetricExporter;
 import io.opentelemetry.exporter.otlp.http.metrics.OtlpHttpMetricExporterBuilder;
+import io.opentelemetry.exporter.otlp.internal.grpc.DefaultGrpcExporterBuilder;
 import io.opentelemetry.exporter.otlp.metrics.OtlpGrpcMetricExporter;
 import io.opentelemetry.exporter.otlp.metrics.OtlpGrpcMetricExporterBuilder;
-import io.opentelemetry.exporter.prometheus.PrometheusCollector;
+import io.opentelemetry.exporter.prometheus.PrometheusHttpServer;
+import io.opentelemetry.exporter.prometheus.PrometheusHttpServerBuilder;
 import io.opentelemetry.sdk.autoconfigure.spi.ConfigProperties;
 import io.opentelemetry.sdk.autoconfigure.spi.ConfigurationException;
 import io.opentelemetry.sdk.autoconfigure.spi.metrics.ConfigurableMetricExporterProvider;
 import io.opentelemetry.sdk.metrics.SdkMeterProviderBuilder;
 import io.opentelemetry.sdk.metrics.export.MetricExporter;
 import io.opentelemetry.sdk.metrics.export.PeriodicMetricReader;
-import io.prometheus.client.exporter.HTTPServer;
-import java.io.IOException;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.Map;
@@ -30,7 +30,10 @@ import javax.annotation.Nullable;
 
 final class MetricExporterConfiguration {
   static void configureExporter(
-      String name, ConfigProperties config, SdkMeterProviderBuilder sdkMeterProviderBuilder) {
+      String name,
+      ConfigProperties config,
+      ClassLoader serviceClassLoader,
+      SdkMeterProviderBuilder sdkMeterProviderBuilder) {
     switch (name) {
       case "otlp":
         configureOtlpMetrics(config, sdkMeterProviderBuilder);
@@ -45,10 +48,8 @@ final class MetricExporterConfiguration {
             "opentelemetry-exporter-logging");
         configureLoggingMetrics(config, sdkMeterProviderBuilder);
         return;
-      case "none":
-        return;
       default:
-        MetricExporter spiExporter = configureSpiExporter(name, config);
+        MetricExporter spiExporter = configureSpiExporter(name, config, serviceClassLoader);
         if (spiExporter == null) {
           throw new ConfigurationException("Unrecognized value for otel.metrics.exporter: " + name);
         }
@@ -59,14 +60,16 @@ final class MetricExporterConfiguration {
 
   // Visible for testing.
   @Nullable
-  static MetricExporter configureSpiExporter(String name, ConfigProperties config) {
+  static MetricExporter configureSpiExporter(
+      String name, ConfigProperties config, ClassLoader serviceClassLoader) {
     Map<String, MetricExporter> spiExporters =
         SpiUtil.loadConfigurable(
             ConfigurableMetricExporterProvider.class,
             Collections.singletonList(name),
             ConfigurableMetricExporterProvider::getName,
             ConfigurableMetricExporterProvider::createExporter,
-            config);
+            config,
+            serviceClassLoader);
     return spiExporters.get(name);
   }
 
@@ -101,7 +104,9 @@ final class MetricExporterConfiguration {
           builder::addHeader,
           builder::setCompression,
           builder::setTimeout,
-          builder::setTrustedCertificates);
+          builder::setTrustedCertificates,
+          (unused) -> {});
+      OtlpConfigUtil.configureOtlpAggregationTemporality(config, builder::setPreferredTemporality);
 
       exporter = builder.build();
     } else if (protocol.equals(PROTOCOL_GRPC)) {
@@ -125,7 +130,12 @@ final class MetricExporterConfiguration {
           builder::addHeader,
           builder::setCompression,
           builder::setTimeout,
-          builder::setTrustedCertificates);
+          builder::setTrustedCertificates,
+          retryPolicy ->
+              DefaultGrpcExporterBuilder.getDelegateBuilder(
+                      OtlpGrpcMetricExporterBuilder.class, builder)
+                  .addRetryPolicy(retryPolicy));
+      OtlpConfigUtil.configureOtlpAggregationTemporality(config, builder::setPreferredTemporality);
 
       exporter = builder.build();
     } else {
@@ -142,40 +152,39 @@ final class MetricExporterConfiguration {
       SdkMeterProviderBuilder sdkMeterProviderBuilder,
       MetricExporter exporter) {
 
-    Duration exportInterval = config.getDuration("otel.imr.export.interval");
+    Duration exportInterval = config.getDuration("otel.metric.export.interval");
+    if (exportInterval == null) {
+      exportInterval = config.getDuration("otel.imr.export.interval");
+    }
     if (exportInterval == null) {
       exportInterval = Duration.ofMinutes(1);
     }
     // Register the reader (which will start when SDK is built).
     // This will shutdown when the SDK is shutdown.
     sdkMeterProviderBuilder.registerMetricReader(
-        PeriodicMetricReader.create(exporter, exportInterval));
+        PeriodicMetricReader.builder(exporter)
+            .setInterval(exportInterval)
+            .newMetricReaderFactory());
   }
 
   private static void configurePrometheusMetrics(
       ConfigProperties config, SdkMeterProviderBuilder sdkMeterProviderBuilder) {
     ClasspathUtil.checkClassExists(
-        "io.opentelemetry.exporter.prometheus.PrometheusCollector",
+        "io.opentelemetry.exporter.prometheus.PrometheusHttpServer",
         "Prometheus Metrics Server",
         "opentelemetry-exporter-prometheus");
-    sdkMeterProviderBuilder.registerMetricReader(PrometheusCollector.create());
-    // TODO: Move this portion into the PrometheusCollector so shutdown on SdkMeterProvider
-    // will collapse prometheus too?
+    PrometheusHttpServerBuilder prom = PrometheusHttpServer.builder();
+
     Integer port = config.getInt("otel.exporter.prometheus.port");
-    if (port == null) {
-      port = 9464;
+    if (port != null) {
+      prom.setPort(port);
     }
     String host = config.getString("otel.exporter.prometheus.host");
-    if (host == null) {
-      host = "0.0.0.0";
+    if (host != null) {
+      prom.setHost(host);
     }
-    final HTTPServer server;
-    try {
-      server = new HTTPServer(host, port, true);
-    } catch (IOException e) {
-      throw new IllegalStateException("Failed to create Prometheus server", e);
-    }
-    Runtime.getRuntime().addShutdownHook(new Thread(server::close));
+
+    sdkMeterProviderBuilder.registerMetricReader(prom.newMetricReaderFactory());
   }
 
   private MetricExporterConfiguration() {}
